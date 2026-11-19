@@ -1,0 +1,36 @@
+<input id="room" placeholder="Oda"><button onclick="join()">Katıl</button>
+<audio id="me" autoplay muted></audio>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io(); const peers = {};
+async function join() {
+  const room = document.getElementById("room").value;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  new AudioStream(stream); // kendi sesini susturmak için muted
+  socket.emit("join", { room, name: "kullanici" });
+
+  socket.on("new-peer", async id => {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+    pc.onicecandidate = e => e.candidate && socket.emit("signal", { to: id, data: { candidate: e.candidate } });
+    pc.ontrack = e => { const a = new Audio(); a.srcObject = e.streams[0]; a.play(); };
+    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+    socket.emit("signal", { to: id, data: { sdp: pc.localDescription } });
+    peers[id] = pc;
+  });
+
+  socket.on("signal", async ({ from, data }) => {
+    let pc = peers[from];
+    if (!pc) {
+      pc = peers[from] = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      stream.getTracks().forEach(t => pc.addTrack(t, stream));
+      pc.ontrack = e => { const a = new Audio(); a.srcObject = e.streams[0]; a.play(); };
+      pc.onicecandidate = e => e.candidate && socket.emit("signal", { to: from, data: { candidate: e.candidate } });
+    }
+    if (data.sdp) { await pc.setRemoteDescription(data.sdp);
+      if (data.sdp.type === "offer") { await pc.setLocalDescription(await pc.createAnswer());
+        socket.emit("signal", { to: from, data: { sdp: pc.localDescription } }); } }
+    else await pc.addIceCandidate(data.candidate);
+  });
+}
+</script>
